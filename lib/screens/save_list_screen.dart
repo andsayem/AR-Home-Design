@@ -1,10 +1,7 @@
-import 'dart:convert';
-
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:homedesign/models/draw_object.dart';
-import 'package:homedesign/models/draw_tool.dart';
-import 'package:homedesign/screens/object_painter.dart';
+import 'package:homedesign/models/project_model.dart';
+import 'package:homedesign/utils/save_manager.dart';
 
 class SaveListScreen extends StatefulWidget {
   const SaveListScreen({super.key});
@@ -14,143 +11,200 @@ class SaveListScreen extends StatefulWidget {
 }
 
 class _SaveListScreenState extends State<SaveListScreen> {
-  List<Map<String, dynamic>> savedDrawings = [];
+  List<ProjectModel> _projects = [];
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    loadSavedDrawings();
+    _loadProjects();
   }
 
-  Future<void> loadSavedDrawings() async {
-    final prefs = await SharedPreferences.getInstance();
-    final keys = prefs.getKeys().where((key) => key.startsWith('drawing_')).toList();
-    savedDrawings = [];
-    for (var key in keys) {
-      final jsonString = prefs.getString(key);
-      if (jsonString != null) {
-        final data = jsonDecode(jsonString) as Map<String, dynamic>;
-        savedDrawings.add(data);
-      }
-    }
-    setState(() {});
+  Future<void> _loadProjects() async {
+    final projects = await SaveManager.getAllProjects();
+    setState(() {
+      _projects = projects;
+      _loading = false;
+    });
   }
 
-  Future<void> deleteDrawing(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(key);
-    loadSavedDrawings();
+  Future<void> _delete(ProjectModel p) async {
+    await SaveManager.deleteProject(p.id);
+    _loadProjects();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF0F0F1E),
       appBar: AppBar(
-        title: const Text('Saved Drawings'),
-        backgroundColor: Colors.blue,
-      ),
-      body: savedDrawings.isEmpty
-          ? const Center(child: Text('No saved drawings'))
-          : ListView.builder(
-              itemCount: savedDrawings.length,
-              itemBuilder: (context, index) {
-                final drawing = savedDrawings[index];
-                final objects = (drawing['objects'] as List<dynamic>?)
-                    ?.map((obj) => DrawObject.fromJson(obj as Map<String, dynamic>))
-                    .toList() ?? [];
-                final timestamp = drawing['timestamp'] as String? ?? 'Unknown';
-
-                return Card(
-                  margin: const EdgeInsets.all(8),
-                  child: ListTile(
-                    leading: SizedBox(
-                      width: 60,
-                      height: 60,
-                      child: CustomPaint(
-                        painter: _ThumbnailPainter(objects),
-                      ),
-                    ),
-                    title: Text('Drawing ${index + 1}'),
-                    subtitle: Text('Saved: $timestamp'),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => deleteDrawing('drawing_$index'),
-                    ),
-                    onTap: () {
-                      // Load the drawing back to camera screen
-                      Navigator.pop(context, objects);
-                    },
-                  ),
-                );
-              },
+        title: const Text('My Designs',
+            style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1)),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [const Color(0xFF4F8EF7).withValues(alpha: 0.1), Colors.transparent],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
             ),
+          ),
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF4F8EF7)))
+          : _projects.isEmpty
+              ? _buildEmptyState()
+              : ListView.builder(
+                  padding: const EdgeInsets.all(20),
+                  itemCount: _projects.length,
+                  itemBuilder: (context, index) {
+                    final p = _projects[index];
+                    return _ProjectCard(
+                      project: p,
+                      onTap: () => Navigator.pop(context, p),
+                      onDelete: () => _delete(p),
+                    );
+                  },
+                ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.architecture_rounded,
+              size: 80, color: Colors.white.withValues(alpha: 0.1)),
+          const SizedBox(height: 20),
+          Text(
+            'No saved designs yet',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.4),
+                fontSize: 16,
+                fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your future room plans will appear here',
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.2), fontSize: 13),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _ThumbnailPainter extends CustomPainter {
-  final List<DrawObject> objects;
+class _ProjectCard extends StatelessWidget {
+  final ProjectModel project;
+  final VoidCallback onTap;
+  final VoidCallback onDelete;
 
-  _ThumbnailPainter(this.objects);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final scale = size.width / 400; // Assume canvas width 400
-    canvas.scale(scale);
-
-    for (var obj in objects) {
-      final paint = Paint()
-        ..color = obj.color
-        ..strokeWidth = obj.strokeWidth
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round;
-
-      final path = _buildPath(obj.points, obj.tool);
-      canvas.drawPath(path, paint);
-    }
-  }
-
-  Path _buildPath(List<Offset> points, DrawTool tool) {
-    final path = Path();
-    if (points.isEmpty) return path;
-
-    if (tool == DrawTool.straightLine && points.length >= 2) {
-      path.moveTo(points.first.dx, points.first.dy);
-      path.lineTo(points.last.dx, points.last.dy);
-      return path;
-    }
-
-    if (tool == DrawTool.rectangle && points.length >= 2) {
-      path.addRect(Rect.fromPoints(points.first, points.last));
-      return path;
-    }
-
-    if (tool == DrawTool.circle && points.length >= 2) {
-      final center = points.first;
-      final radius = (points.last - points.first).distance;
-      path.addOval(Rect.fromCircle(center: center, radius: radius));
-      return path;
-    }
-
-    if (tool == DrawTool.triangle && points.length >= 2) {
-      final a = points.first;
-      final b = points.last;
-      final c = Offset((a.dx + b.dx) / 2, a.dy - (b.dy - a.dy).abs());
-      path.moveTo(a.dx, a.dy);
-      path.lineTo(b.dx, b.dy);
-      path.lineTo(c.dx, c.dy);
-      path.close();
-      return path;
-    }
-
-    path.moveTo(points.first.dx, points.first.dy);
-    for (int i = 1; i < points.length; i++) {
-      path.lineTo(points[i].dx, points[i].dy);
-    }
-
-    return path;
-  }
+  const _ProjectCard({
+    required this.project,
+    required this.onTap,
+    required this.onDelete,
+  });
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Preview Image or Placeholder
+            Container(
+              height: 160,
+              width: double.infinity,
+              color: Colors.black26,
+              child: project.imagePath != null && File(project.imagePath!).existsSync()
+                  ? Image.file(File(project.imagePath!), fit: BoxFit.cover)
+                  : const Center(
+                      child: Icon(Icons.image_not_supported_rounded,
+                          color: Colors.white12, size: 40),
+                    ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          project.name,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Created ${_timeAgo(project.createdAt)}',
+                          style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.4),
+                              fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline_rounded,
+                        color: Color(0xFFFF5252), size: 22),
+                    onPressed: () => _confirmDelete(context),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('Delete Project?', style: TextStyle(color: Colors.white)),
+        content: const Text('This action cannot be undone.',
+            style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white38)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              onDelete();
+            },
+            child: const Text('Delete', style: TextStyle(color: Color(0xFFFF5252))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _timeAgo(DateTime dt) {
+    final diff = DateTime.now().difference(dt);
+    if (diff.inDays > 0) return '${diff.inDays}d ago';
+    if (diff.inHours > 0) return '${diff.inHours}h ago';
+    if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
+    return 'Just now';
+  }
 }

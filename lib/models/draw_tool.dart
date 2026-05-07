@@ -23,6 +23,7 @@ enum DrawTool {
   rotate,
   delete,
   eraser,
+  magicEraser, // 🤖 AI Object Removal
 
   // 🎨 STYLE / FILL
   fillTool,
